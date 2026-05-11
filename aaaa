@@ -22,35 +22,10 @@ end)
 local fakePlayerIds = {}  
 _G.fakePlayerIds = fakePlayerIds  
   
--- Load Fsys safely  
-local FsysModule = ReplicatedStorage:FindFirstChild('Fsys')  
-if not FsysModule then return end  
-local okFsys, Fsys = pcall(require, FsysModule)  
-if not okFsys or not Fsys or type(Fsys.load) ~= 'function' then return end  
-local function load(name)  
-    local module  
-    local callOk  
-
-    callOk, module = pcall(Fsys.load, Fsys, name)  
-    if callOk and module then  
-        return module  
-    end  
-    callOk, module = pcall(Fsys.load, name)  
-    if callOk and module then  
-        return module  
-    end  
-    return nil  
-end  
-  
 -- Hook SettingsHelper  
 task.spawn(function()  
     task.wait(0.1)  
-    local success, SettingsHelper = pcall(function()  
-        return load('SettingsHelper')  
-    end)  
-    if not success or not SettingsHelper or type(SettingsHelper.get_setting_server) ~= 'function' then  
-        return  
-    end  
+    local SettingsHelper = require(ReplicatedStorage:WaitForChild('Fsys')).load('SettingsHelper')  
     local original_get_setting_server = SettingsHelper.get_setting_server  
   
     SettingsHelper.get_setting_server = function(player, settingName, ...)  
@@ -59,13 +34,15 @@ task.spawn(function()
             if not Players:GetPlayerByUserId(player.UserId) then return false end  
         end  
         local args = { ... }  
-        local successInner, result = pcall(function()  
+        local success, result = pcall(function()  
             return original_get_setting_server(player, settingName, table.unpack(args))  
         end)  
-        if successInner then return result else return false end  
+        if success then return result else return false end  
     end  
 end)  
   
+local Fsys = require(ReplicatedStorage:WaitForChild('Fsys'))  
+local load = Fsys.load  
 local Modules = {  
     UIManager = load('UIManager'),  
     ClientData = load('ClientData'),  
@@ -82,18 +59,10 @@ local RouterClient = Modules.RouterClient
 local InventoryDB = Modules.InventoryDB  
 local ColorThemeManager = Modules.ColorThemeManager  
   
-if not UIManager or type(UIManager) ~= 'table' then  
-    return  
-end  
-  
 if UIManager.wait_for_initialization then  
     UIManager:wait_for_initialization()  
 else  
     task.wait(2)  
-end  
-  
-if not UIManager.apps then  
-    return  
 end  
   
 local Apps = {  
@@ -109,16 +78,7 @@ local HintApp = Apps.HintApp
 local DialogApp = Apps.DialogApp  
 local PlayerProfileApp = Apps.PlayerProfileApp  
   
-local localPlayer = Players.LocalPlayer  
-if not localPlayer then  
-    return  
-end  
-local playerGui = localPlayer:WaitForChild('PlayerGui')  
-local tradeGui = playerGui:FindFirstChild('TradeApp')  
-local NegotiationFrame = tradeGui and tradeGui:FindFirstChild('Frame') and tradeGui.Frame:FindFirstChild('NegotiationFrame')
-if not NegotiationFrame then  
-    return  
-end  
+local NegotiationFrame = Players.LocalPlayer.PlayerGui.TradeApp.Frame.NegotiationFrame  
   
 local function FriendHighlight(FriendValue)  
     NegotiationFrame.FriendHighlight.Visible = FriendValue  
@@ -260,10 +220,6 @@ local CONFIG = {
     SHOW_TRADE_REQUEST = true,  
     TRADE_REQUEST_DELAY = 0,  
     ADD_PET_REQUEST_DELAY = 0.5,  
-    AUTO_ADD_MIN = 1,  
-    AUTO_ADD_MAX = 5,  
-    AUTO_ADD_ENABLED = false,  
-    AUTO_ADD_INTERVAL = 0.8,  
 }  
   
 local mockState = {  
@@ -276,11 +232,6 @@ local mockState = {
     canShowTradeRequest = true,  
     tradeRequestBlocked = false,  
     isMockTradeDialog = false,  
-    autoAddRunning = false,  
-    autoAddThread = nil,  
-    tradesCompleted = 0,  
-    petsTraded = 0,  
-    petsReceived = 0,  
 }  
   
 local function checkTradeLicense(player)  
@@ -370,15 +321,6 @@ local function createMockTrade(realPlayer)
         subscriber_count = 0,  
     }  
 end  
-
-local function playSound(soundId)
-    local sound = Instance.new('Sound')
-    sound.SoundId = 'rbxassetid://' .. soundId
-    sound.Volume = 0.5
-    sound.Parent = workspace
-    game:GetService('Debris'):AddItem(sound, 1)
-    sound:Play()
-end
   
 local function update_busy_indicators(args1)  
     local v144 = mockState.trade.busy_indicators  
@@ -393,7 +335,7 @@ local function addPetToPartnerOffer(petName, flags)
     if #mockState.trade.recipient_offer.items >= 18 then return end  
   
     update_busy_indicators({ ['picking'] = true })  
-    task.wait(getSmartDelay())  
+    task.wait(CONFIG.ADD_PET_REQUEST_DELAY)  
   
     for category_name, category_table in pairs(InventoryDB) do  
         if category_name == 'pets' then  
@@ -416,8 +358,9 @@ local function addPetToPartnerOffer(petName, flags)
                     mockState.trade.offer_version = mockState.trade.offer_version + 1  
                     TradeApp:_overwrite_local_trade_state(mockState.trade)  
                     if TradeApp._lock_trade_for_appropriate_time then TradeApp:_lock_trade_for_appropriate_time() end  
-                    if CONFIG.SOUND_ENABLED then playSound(9113410810) end  
-  
+                    if TradeApp._render_message_in_trade_chat then  
+                        TradeApp:_render_message_in_trade_chat(nil, string.format('%s added %s.', CONFIG.PARTNER_NAME, petName), true)  
+                    end  
                     update_busy_indicators({ ['picking'] = false })  
                     return true, 'Pet added successfully'  
                 end  
@@ -433,7 +376,6 @@ local function removeLatestPetFromPartnerOffer()
     local partnerItems = mockState.trade.recipient_offer.items  
     if #partnerItems == 0 then return false, 'No items to remove' end  
   
-    task.wait(getSmartDelay())  
     local removedItem = table.remove(partnerItems)  
     mockState.trade.sender_offer.negotiated = false  
     mockState.trade.recipient_offer.negotiated = false  
@@ -445,8 +387,17 @@ local function removeLatestPetFromPartnerOffer()
     mockState.trade.offer_version = mockState.trade.offer_version + 1  
     TradeApp:_overwrite_local_trade_state(mockState.trade)  
     if TradeApp._lock_trade_for_appropriate_time then TradeApp:_lock_trade_for_appropriate_time() end  
-    if CONFIG.SOUND_ENABLED then playSound(6895383765) end  
-  
+    if TradeApp._render_message_in_trade_chat then  
+        local itemName = 'item'  
+        if removedItem.category == 'pets' then  
+            for _, category_table in pairs(InventoryDB) do  
+                for id, item in pairs(category_table) do  
+                    if id == removedItem.kind then itemName = item.name break end  
+                end  
+            end  
+        end  
+        TradeApp:_render_message_in_trade_chat(nil, string.format('%s removed %s.', CONFIG.PARTNER_NAME, itemName), true)  
+    end  
     return true, 'Pet removed successfully'  
 end  
   
@@ -454,58 +405,6 @@ local function generateRandomPetProperties()
     local properties = { F = true, R = true, N = false, M = false }  
     if math.random() > 0.5 then properties.N = true end  
     return properties  
-end
-
-local function addPetToMyOffer(petName, flags)
-    if not mockState.active or not mockState.trade then return false, 'No active mock trade' end  
-    if mockState.trade.current_stage == 'confirmation' then return false, 'Cannot modify during confirmation' end  
-    if #mockState.trade.sender_offer.items >= 18 then return false, 'Backpack full' end  
-
-    update_busy_indicators({ ['picking'] = true })  
-    task.wait(getSmartDelay())  
-
-    for category_name, category_table in pairs(InventoryDB) do  
-        if category_name == 'pets' then  
-            for id, item in pairs(category_table) do  
-                if item.name == petName then  
-                    local petItem = {  
-                        category = 'pets',  
-                        kind = id,  
-                        unique = HttpService:GenerateGUID(),  
-                        properties = { flyable = flags.F, rideable = flags.R, neon = flags.N, mega_neon = flags.M, age = 1 },  
-                    }  
-                    table.insert(mockState.trade.sender_offer.items, petItem)  
-                    mockState.trade.sender_offer.negotiated = false  
-                    mockState.trade.recipient_offer.negotiated = false  
-                    mockState.trade.offer_version = mockState.trade.offer_version + 1  
-                    TradeApp:_overwrite_local_trade_state(mockState.trade)  
-                    if TradeApp._lock_trade_for_appropriate_time then TradeApp:_lock_trade_for_appropriate_time() end  
-                    if CONFIG.SOUND_ENABLED then playSound(9113410810) end  
-                    mockState.petsTraded = mockState.petsTraded + 1  
-                    update_busy_indicators({ ['picking'] = false })  
-                    return true, 'Pet added successfully'  
-                end  
-            end  
-        end  
-    end  
-    return false, 'Pet not found'  
-end
-
-local function removeLatestPetFromMyOffer()
-    if not mockState.active or not mockState.trade then return false, 'No active mock trade' end  
-    if mockState.trade.current_stage == 'confirmation' then return false, 'Cannot modify during confirmation' end  
-    local myItems = mockState.trade.sender_offer.items  
-    if #myItems == 0 then return false, 'No items to remove' end  
-
-    task.wait(getSmartDelay())  
-    table.remove(myItems)  
-    mockState.trade.sender_offer.negotiated = false  
-    mockState.trade.recipient_offer.negotiated = false  
-    mockState.trade.offer_version = mockState.trade.offer_version + 1  
-    TradeApp:_overwrite_local_trade_state(mockState.trade)  
-    if TradeApp._lock_trade_for_appropriate_time then TradeApp:_lock_trade_for_appropriate_time() end  
-    if CONFIG.SOUND_ENABLED then playSound(6895383765) end  
-    return true, 'Pet removed successfully'  
 end  
   
 local function partnerAutoAction()  
@@ -541,15 +440,6 @@ local function partnerAutoAction()
                 mockState.tradeCompleting = true  
                 if TradeApp._set_confirmation_arrow_rotating then TradeApp:_set_confirmation_arrow_rotating(true) end  
                 task.wait(3)  
-                local receivedCount = #mockState.trade.recipient_offer.items  
-                mockState.petsReceived = mockState.petsReceived + receivedCount  
-                mockState.tradesCompleted = mockState.tradesCompleted + 1  
-                if CONFIG.SOUND_ENABLED then playSound(6384472561) end  
-                if BackpackApp and BackpackApp._add_pet_to_inventory then  
-                    for _, item in ipairs(mockState.trade.recipient_offer.items) do  
-                        pcall(function() BackpackApp:_add_pet_to_inventory(item) end)  
-                    end  
-                end  
                 mockState.active = false  
                 mockState.trade = nil  
                 mockState.tradeCompleting = false  
@@ -892,758 +782,419 @@ end
 -- ==================== GUI CREATION ====================  
   
 local controlGui = Instance.new('ScreenGui')  
-controlGui.Name = 'Iveyyy43TradeGui'  
+controlGui.Name = 'TradeSystemGUI'  
 controlGui.ResetOnSpawn = false  
 controlGui.DisplayOrder = 10  
 controlGui.Enabled = true  
 controlGui.Parent = Players.LocalPlayer:WaitForChild('PlayerGui')  
-  
-local mainShadow = Instance.new('Frame')  
-mainShadow.Size = UDim2.new(0, 286, 0, 702)  
-mainShadow.Position = UDim2.new(0.5, -143, 0.5, -351)  
-mainShadow.BackgroundColor3 = Color3.fromRGB(10, 10, 15)  
-mainShadow.BackgroundTransparency = 0.6  
-mainShadow.BorderSizePixel = 0  
-mainShadow.ZIndex = 0  
-mainShadow.Parent = controlGui  
-  
-local mainShadowCorner = Instance.new('UICorner')  
-mainShadowCorner.CornerRadius = UDim.new(0, 16)  
-mainShadowCorner.Parent = mainShadow  
-  
+
 local mainFrame = Instance.new('Frame')  
-mainFrame.Size = UDim2.new(0, 280, 0, 700)  
-mainFrame.Position = UDim2.new(0.5, -140, 0.5, -350)  
-mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 45)  
+mainFrame.Size = UDim2.new(0, 500, 0, 600)  
+mainFrame.Position = UDim2.new(0.5, -250, 0.5, -300)  
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 35)  
 mainFrame.BorderSizePixel = 0  
 mainFrame.ZIndex = 1  
 mainFrame.Active = true  
+mainFrame.Draggable = true  
 mainFrame.Parent = controlGui  
-mainFrame.BackgroundTransparency = 0.05  
-  
+mainFrame.BackgroundTransparency = 0  
+
 local mainCorner = Instance.new('UICorner')  
-mainCorner.CornerRadius = UDim.new(0, 12)  
-mainCorner.Parent = mainFrame  
-  
+mainCorner.CornerRadius = UDim.new(0, 15)  
+mainCorner.Parent = mainFrame
+
 local mainStroke = Instance.new('UIStroke')  
+mainStroke.Color = Color3.fromRGB(170, 0, 255)  
+mainStroke.Thickness = 3  
 mainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border  
-mainStroke.Color = Color3.fromRGB(100, 150, 255)  
-mainStroke.Thickness = 2.5  
 mainStroke.Parent = mainFrame  
-  
+
+-- Shadow Frame  
+local shadowFrame = Instance.new('Frame')  
+shadowFrame.Size = UDim2.new(0, 520, 0, 620)  
+shadowFrame.BackgroundColor3 = Color3.new(0, 0, 0)  
+shadowFrame.BorderSizePixel = 0  
+shadowFrame.ZIndex = 0  
+shadowFrame.Parent = controlGui  
+
+local shadowCorner = Instance.new('UICorner')  
+shadowCorner.CornerRadius = UDim.new(0, 17)  
+shadowCorner.Parent = shadowFrame
+
+mainFrame:GetPropertyChangedSignal("Position"):Connect(function()  
+   shadowFrame.Position = UDim2.new(  
+       mainFrame.Position.X.Scale,  
+       mainFrame.Position.X.Offset - 10,  
+       mainFrame.Position.Y.Scale,  
+       mainFrame.Position.Y.Offset - 10  
+   )  
+end)  
+
+-- TITLE BAR  
+local titleFrame = Instance.new('Frame')  
+titleFrame.Size = UDim2.new(1, 0, 0, 50)  
+titleFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 20)  
+titleFrame.BorderSizePixel = 0  
+titleFrame.Parent = mainFrame
+
+local titleCorner = Instance.new('UICorner')  
+titleCorner.CornerRadius = UDim.new(0, 15)  
+titleCorner.Parent = titleFrame
+
 local titleLabel = Instance.new('TextLabel')  
-titleLabel.Size = UDim2.new(1, -44, 0, 36)  
-titleLabel.Position = UDim2.new(0, 16, 0, 10)  
+titleLabel.Size = UDim2.new(1, -50, 1, 0)  
+titleLabel.Position = UDim2.new(0, 10, 0, 0)  
 titleLabel.BackgroundTransparency = 1  
-titleLabel.Text = 'Iveyyy43 on dc'  
-titleLabel.Font = Enum.Font.FredokaOne  
-titleLabel.TextSize = 16  
-titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)  
+titleLabel.Text = '🎮 TRADE SYSTEM - Iveyyy43 on dc'  
+titleLabel.Font = Enum.Font.GothamBold  
+titleLabel.TextSize = 18  
+titleLabel.TextColor3 = Color3.fromRGB(255, 100, 200)  
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left  
-titleLabel.Parent = mainFrame  
-  
-local closeButton = Instance.new('TextButton')  
-closeButton.Size = UDim2.new(0, 24, 0, 24)  
-closeButton.Position = UDim2.new(1, -32, 0, 10)  
-closeButton.BackgroundColor3 = Color3.fromRGB(55, 45, 70)  
-closeButton.BorderSizePixel = 0  
-closeButton.Text = 'X'  
-closeButton.Font = Enum.Font.FredokaOne  
-closeButton.TextSize = 16  
-closeButton.TextColor3 = Color3.fromRGB(220, 220, 220)  
-closeButton.Parent = mainFrame  
+titleLabel.Parent = titleFrame
+
+local closeBtn = Instance.new('TextButton')  
+closeBtn.Size = UDim2.new(0, 40, 0, 40)  
+closeBtn.Position = UDim2.new(1, -45, 0, 5)  
+closeBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)  
+closeBtn.Text = '✕'  
+closeBtn.Font = Enum.Font.GothamBold  
+closeBtn.TextSize = 18  
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)  
+closeBtn.BorderSizePixel = 0  
+closeBtn.Parent = titleFrame
+
 local closeCorner = Instance.new('UICorner')  
 closeCorner.CornerRadius = UDim.new(0, 8)  
-closeCorner.Parent = closeButton  
-closeButton.MouseButton1Click:Connect(function()  
-    mainFrame.Visible = not mainFrame.Visible  
-end)  
-  
-local container = Instance.new('Frame')  
-container.Size = UDim2.new(0.9, 0, 1, -50)  
-container.Position = UDim2.new(0.05, 0, 0.08, 0)  
-container.BackgroundTransparency = 1  
-container.Parent = mainFrame  
+closeCorner.Parent = closeBtn
 
-local scrollFrame = Instance.new('ScrollingFrame')
-scrollFrame.Size = UDim2.new(1, 0, 1, 0)
-scrollFrame.BackgroundTransparency = 1
-scrollFrame.ScrollBarThickness = 8
-scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 150, 255)
-scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-scrollFrame.Parent = container
-
-local innerContainer = Instance.new('Frame')
-innerContainer.Size = UDim2.new(1, 0, 1, 0)
-innerContainer.BackgroundTransparency = 1
-innerContainer.Parent = scrollFrame  
-  
-local layout = Instance.new('UIListLayout')  
-layout.SortOrder = Enum.SortOrder.LayoutOrder  
-layout.Padding = UDim.new(0, 8)  
-layout.Parent = innerContainer  
-  
--- Partner Username Input  
-local usernameLabel = Instance.new('TextLabel')  
-usernameLabel.Size = UDim2.new(1, 0, 0, 16)  
-usernameLabel.BackgroundTransparency = 1  
-usernameLabel.Text = '👤 Partner Username'  
-usernameLabel.Font = Enum.Font.GothamBold  
-usernameLabel.TextSize = 11  
-usernameLabel.TextColor3 = Color3.fromRGB(180, 180, 200)  
-usernameLabel.TextXAlignment = Enum.TextXAlignment.Left  
-usernameLabel.LayoutOrder = 1  
-usernameLabel.Parent = innerContainer  
-  
-local usernameBox = Instance.new('TextBox')  
-usernameBox.Size = UDim2.new(1, 0, 0, 32)  
-usernameBox.BackgroundColor3 = Color3.fromRGB(45, 45, 60)  
-usernameBox.BackgroundTransparency = 0.2  
-usernameBox.Text = 'endeavor3313'  
-usernameBox.PlaceholderText = 'Enter Roblox username...'  
-usernameBox.Font = Enum.Font.GothamMedium  
-usernameBox.TextSize = 12  
-usernameBox.TextColor3 = Color3.fromRGB(255, 255, 255)  
-usernameBox.ClearTextOnFocus = false  
-usernameBox.TextXAlignment = Enum.TextXAlignment.Center  
-usernameBox.LayoutOrder = 2  
-usernameBox.Parent = innerContainer  
-local uc = Instance.new('UICorner')  
-uc.CornerRadius = UDim.new(0, 8)  
-uc.Parent = usernameBox  
-local us = Instance.new('UIStroke')  
-us.ApplyStrokeMode = Enum.ApplyStrokeMode.Border  
-us.Color = Color3.fromRGB(100, 100, 140)  
-us.Thickness = 1.2  
-us.Parent = usernameBox  
-  
-usernameBox.FocusLost:Connect(function()  
-    if usernameBox.Text ~= '' then  
-        updatePartnerFromUsername(usernameBox.Text)  
-        if HintApp then  
-            HintApp:hint({ text = 'Partner set to ' .. usernameBox.Text, length = 2, overridable = true })  
-        end  
-    end  
-end)  
-  
--- Start Trade Button  
-local startTradeButton = Instance.new('TextButton')  
-startTradeButton.Size = UDim2.new(1, 0, 0, 50)  
-startTradeButton.BackgroundColor3 = Color3.fromRGB(50, 150, 80)  
-startTradeButton.BackgroundTransparency = 0.1  
-startTradeButton.Text = '✨ START TRADE ✨'  
-startTradeButton.Font = Enum.Font.FredokaOne  
-startTradeButton.TextSize = 18  
-startTradeButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
-startTradeButton.LayoutOrder = 3  
-startTradeButton.Parent = innerContainer  
-local stc = Instance.new('UICorner')  
-stc.CornerRadius = UDim.new(0, 10)  
-stc.Parent = startTradeButton  
-local sts = Instance.new('UIStroke')  
-sts.ApplyStrokeMode = Enum.ApplyStrokeMode.Border  
-sts.Color = Color3.fromRGB(100, 255, 150)  
-sts.Thickness = 2  
-sts.Parent = startTradeButton  
-  
-local startTradePulse  
-startTradeButton.MouseEnter:Connect(function()  
-    TweenService:Create(startTradeButton, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(70, 180, 100) }):Play()  
-    if startTradePulse then startTradePulse:Cancel() end  
-    startTradePulse = TweenService:Create(sts, TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {  
-        Color = Color3.fromRGB(255, 255, 255), Thickness = 3  
-    })  
-    startTradePulse:Play()  
-end)  
-startTradeButton.MouseLeave:Connect(function()  
-    TweenService:Create(startTradeButton, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(50, 150, 80) }):Play()  
-    if startTradePulse then startTradePulse:Cancel() end  
-    sts.Color = Color3.fromRGB(100, 255, 150)  
-    sts.Thickness = 2  
-end)  
-  
-startTradeButton.MouseButton1Click:Connect(function()  
-    if mockState.active or mockState.pendingTradeRequest then  
-        if HintApp then  
-            HintApp:hint({ text = 'Already in a trade!', length = 2, overridable = true })  
-        end  
-        return  
-    end  
-      
-    if CONFIG.SHOW_TRADE_REQUEST then  
-        task.spawn(showTradeRequest)  
-    else  
-        task.spawn(startMockTradeDirectly)  
-    end  
-end)  
-  
--- Add High Tier Button  
-local addHighTierButton = Instance.new('TextButton')  
-addHighTierButton.Size = UDim2.new(1, 0, 0, 44)  
-addHighTierButton.BackgroundColor3 = Color3.fromRGB(120, 100, 180)  
-addHighTierButton.BackgroundTransparency = 0.1  
-addHighTierButton.Text = '➕ ADD HIGH TIER PET'  
-addHighTierButton.Font = Enum.Font.FredokaOne  
-addHighTierButton.TextSize = 16  
-addHighTierButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
-addHighTierButton.LayoutOrder = 4  
-addHighTierButton.Parent = innerContainer  
-local ahtc = Instance.new('UICorner')  
-ahtc.CornerRadius = UDim.new(0, 10)  
-ahtc.Parent = addHighTierButton  
-local ahts = Instance.new('UIStroke')  
-ahts.ApplyStrokeMode = Enum.ApplyStrokeMode.Border  
-ahts.Color = Color3.fromRGB(170, 130, 255)  
-ahts.Thickness = 2  
-ahts.Parent = addHighTierButton  
-  
-addHighTierButton.MouseEnter:Connect(function()  
-    TweenService:Create(addHighTierButton, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(140, 120, 200) }):Play()  
-end)  
-addHighTierButton.MouseLeave:Connect(function()  
-    TweenService:Create(addHighTierButton, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(120, 100, 180) }):Play()  
-end)  
-  
-addHighTierButton.MouseButton1Click:Connect(function()  
-    if not mockState.active then  
-        if HintApp then  
-            HintApp:hint({ text = 'Start a trade first!', length = 2, overridable = true })  
-        end  
-        return  
-    end  
-      
-    local petName = getRandomHighValuePet()  
-    local flags = generateRandomPetProperties()  
-    local success = addPetToPartnerOffer(petName, flags)  
-    if HintApp and success then
-        local flagText = ''
-        if flags.M then flagText = 'Mega '
-        elseif flags.N then flagText = 'Neon ' end
-        if flags.F and flags.R then flagText = flagText .. 'FR'
-        elseif flags.F then flagText = flagText .. 'F'
-        elseif flags.R then flagText = flagText .. 'R' end
-        HintApp:hint({ text = '✓ ' .. flagText .. petName, length = 1.5, overridable = true })  
-    end
-end)  
-  
--- AUTO ADD PETS SECTION
-local autoAddLabel = Instance.new('TextLabel')
-autoAddLabel.Size = UDim2.new(1, 0, 0, 18)
-autoAddLabel.BackgroundTransparency = 1
-autoAddLabel.Text = '⚙️ AUTO ADD'
-autoAddLabel.Font = Enum.Font.GothamBold
-autoAddLabel.TextSize = 11
-autoAddLabel.TextColor3 = Color3.fromRGB(150, 200, 255)
-autoAddLabel.TextXAlignment = Enum.TextXAlignment.Left
-autoAddLabel.LayoutOrder = 5
-autoAddLabel.Parent = innerContainer
-
-local minLabel = Instance.new('TextLabel')
-minLabel.Size = UDim2.new(1, 0, 0, 16)
-minLabel.BackgroundTransparency = 1
-minLabel.Text = 'Min:'
-minLabel.Font = Enum.Font.GothamMedium
-minLabel.TextSize = 11
-minLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-minLabel.TextXAlignment = Enum.TextXAlignment.Left
-minLabel.LayoutOrder = 6
-minLabel.Parent = innerContainer
-
-local minBox = Instance.new('TextBox')
-minBox.Size = UDim2.new(1, 0, 0, 28)
-minBox.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
-minBox.BackgroundTransparency = 0.2
-minBox.Text = '1'
-minBox.Font = Enum.Font.GothamMedium
-minBox.TextSize = 12
-minBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-minBox.TextXAlignment = Enum.TextXAlignment.Center
-minBox.LayoutOrder = 7
-minBox.Parent = innerContainer
-local minc = Instance.new('UICorner')
-minc.CornerRadius = UDim.new(0, 6)
-minc.Parent = minBox
-local mins = Instance.new('UIStroke')
-mins.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-mins.Color = Color3.fromRGB(100, 100, 140)
-mins.Thickness = 1
-mins.Parent = minBox
-
-local maxLabel = Instance.new('TextLabel')
-maxLabel.Size = UDim2.new(1, 0, 0, 16)
-maxLabel.BackgroundTransparency = 1
-maxLabel.Text = 'Max:'
-maxLabel.Font = Enum.Font.GothamMedium
-maxLabel.TextSize = 11
-maxLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-maxLabel.TextXAlignment = Enum.TextXAlignment.Left
-maxLabel.LayoutOrder = 8
-maxLabel.Parent = innerContainer
-
-local maxBox = Instance.new('TextBox')
-maxBox.Size = UDim2.new(1, 0, 0, 28)
-maxBox.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
-maxBox.BackgroundTransparency = 0.2
-maxBox.Text = '6'
-maxBox.Font = Enum.Font.GothamMedium
-maxBox.TextSize = 12
-maxBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-maxBox.TextXAlignment = Enum.TextXAlignment.Center
-maxBox.LayoutOrder = 9
-maxBox.Parent = innerContainer
-local maxc = Instance.new('UICorner')
-maxc.CornerRadius = UDim.new(0, 6)
-maxc.Parent = maxBox
-local maxs = Instance.new('UIStroke')
-maxs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-maxs.Color = Color3.fromRGB(100, 100, 140)
-maxs.Thickness = 1
-maxs.Parent = maxBox
-
-local intervalLabel = Instance.new('TextLabel')
-intervalLabel.Size = UDim2.new(1, 0, 0, 16)
-intervalLabel.BackgroundTransparency = 1
-intervalLabel.Text = 'Interval:'
-intervalLabel.Font = Enum.Font.GothamMedium
-intervalLabel.TextSize = 11
-intervalLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-intervalLabel.TextXAlignment = Enum.TextXAlignment.Left
-intervalLabel.LayoutOrder = 10
-intervalLabel.Parent = innerContainer
-
-local intervalBox = Instance.new('TextBox')
-intervalBox.Size = UDim2.new(1, 0, 0, 28)
-intervalBox.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
-intervalBox.BackgroundTransparency = 0.2
-intervalBox.Text = '1'
-intervalBox.Font = Enum.Font.GothamMedium
-intervalBox.TextSize = 12
-intervalBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-intervalBox.TextXAlignment = Enum.TextXAlignment.Center
-intervalBox.LayoutOrder = 11
-intervalBox.Parent = innerContainer
-local intc = Instance.new('UICorner')
-intc.CornerRadius = UDim.new(0, 6)
-intc.Parent = intervalBox
-local ints = Instance.new('UIStroke')
-ints.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-ints.Color = Color3.fromRGB(100, 100, 140)
-ints.Thickness = 1
-ints.Parent = intervalBox
-
--- Auto Add Toggle Button
-local autoAddToggle = Instance.new('TextButton')
-autoAddToggle.Size = UDim2.new(1, 0, 0, 40)
-autoAddToggle.BackgroundColor3 = Color3.fromRGB(100, 60, 60)
-autoAddToggle.BackgroundTransparency = 0.2
-autoAddToggle.Text = '🔴 AUTO ADD OFF'
-autoAddToggle.Font = Enum.Font.FredokaOne
-autoAddToggle.TextSize = 14
-autoAddToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-autoAddToggle.LayoutOrder = 12
-autoAddToggle.Parent = innerContainer
-local atc = Instance.new('UICorner')
-atc.CornerRadius = UDim.new(0, 8)
-atc.Parent = autoAddToggle
-local ats = Instance.new('UIStroke')
-ats.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-ats.Color = Color3.fromRGB(255, 100, 100)
-ats.Thickness = 1.5
-ats.Parent = autoAddToggle
-
-autoAddToggle.MouseButton1Click:Connect(function()
-    CONFIG.AUTO_ADD_ENABLED = not CONFIG.AUTO_ADD_ENABLED
-    if CONFIG.AUTO_ADD_ENABLED then
-        autoAddToggle.BackgroundColor3 = Color3.fromRGB(60, 120, 60)
-        autoAddToggle.Text = '🟢 AUTO ADD ON'
-        ats.Color = Color3.fromRGB(100, 255, 100)
-        
-        local minVal = tonumber(minBox.Text) or 1
-        local maxVal = tonumber(maxBox.Text) or 6
-        CONFIG.AUTO_ADD_MIN = math.clamp(minVal, 1, 20)
-        CONFIG.AUTO_ADD_MAX = math.clamp(maxVal, CONFIG.AUTO_ADD_MIN, 20)
-        CONFIG.AUTO_ADD_INTERVAL = tonumber(intervalBox.Text) or 1
-        
-        if mockState.autoAddThread then
-            task.cancel(mockState.autoAddThread)
-        end
-        
-    mockState.autoAddThread = task.spawn(function()
-            while CONFIG.AUTO_ADD_ENABLED do
-                task.wait(CONFIG.AUTO_ADD_INTERVAL + getSmartDelay())
-                if mockState.active and not mockState.autoAddRunning and mockState.trade.current_stage ~= 'confirmation' then
-                    mockState.autoAddRunning = true
-                    local count = math.random(CONFIG.AUTO_ADD_MIN, CONFIG.AUTO_ADD_MAX)
-                    for i = 1, count do
-                        if not mockState.active or not CONFIG.AUTO_ADD_ENABLED then break end
-                        if #mockState.trade.recipient_offer.items < 18 then
-                            local petName = getRandomHighValuePet()
-                            local flags = generateRandomPetProperties()
-                            addPetToPartnerOffer(petName, flags)
-                            task.wait(getSmartDelay())
-                        end
-                    end
-                    mockState.autoAddRunning = false
-                end
-            end
-        end)
-        
-        if HintApp then
-            HintApp:hint({ text = 'Auto Add enabled!', length = 2, overridable = true })
-        end
-    else
-        CONFIG.AUTO_ADD_ENABLED = false
-        autoAddToggle.BackgroundColor3 = Color3.fromRGB(100, 60, 60)
-        autoAddToggle.Text = '🔴 AUTO ADD OFF'
-        ats.Color = Color3.fromRGB(255, 100, 100)
-        if HintApp then
-            HintApp:hint({ text = 'Auto Add disabled!', length = 2, overridable = true })
-        end
-    end
+closeBtn.MouseButton1Click:Connect(function()  
+   mainFrame.Visible = false  
 end)
 
--- ADD PET TO MY OFFER
-local addMyPetButton = Instance.new('TextButton')
-addMyPetButton.Size = UDim2.new(1, 0, 0, 38)
-addMyPetButton.BackgroundColor3 = Color3.fromRGB(150, 100, 50)
-addMyPetButton.BackgroundTransparency = 0.1
-addMyPetButton.Text = '➕ ADD TO MY OFFER'
-addMyPetButton.Font = Enum.Font.FredokaOne
-addMyPetButton.TextSize = 12
-addMyPetButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-addMyPetButton.LayoutOrder = 14
-addMyPetButton.Parent = innerContainer
-local ampc = Instance.new('UICorner')
-ampc.CornerRadius = UDim.new(0, 10)
-ampc.Parent = addMyPetButton
-local amps = Instance.new('UIStroke')
-amps.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-amps.Color = Color3.fromRGB(200, 150, 100)
-amps.Thickness = 2
-amps.Parent = addMyPetButton
+-- TAB SYSTEM  
+local tabFrame = Instance.new('Frame')  
+tabFrame.Size = UDim2.new(1, 0, 0, 40)  
+tabFrame.Position = UDim2.new(0, 0, 0, 50)  
+tabFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)  
+tabFrame.BorderSizePixel = 0  
+tabFrame.Parent = mainFrame
 
-addMyPetButton.MouseEnter:Connect(function()
-    TweenService:Create(addMyPetButton, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(180, 120, 70) }):Play()
-end)
-addMyPetButton.MouseLeave:Connect(function()
-    TweenService:Create(addMyPetButton, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(150, 100, 50) }):Play()
-end)
+local myOfferTab = Instance.new('TextButton')  
+myOfferTab.Size = UDim2.new(0.33, 0, 1, 0)  
+myOfferTab.Position = UDim2.new(0, 0, 0, 0)  
+myOfferTab.BackgroundColor3 = Color3.fromRGB(60, 40, 100)  
+myOfferTab.Text = 'MY OFFER'  
+myOfferTab.Font = Enum.Font.GothamBold  
+myOfferTab.TextSize = 13  
+myOfferTab.TextColor3 = Color3.fromRGB(255, 200, 255)  
+myOfferTab.BorderSizePixel = 0  
+myOfferTab.Parent = tabFrame
 
-addMyPetButton.MouseButton1Click:Connect(function()
-    if not mockState.active then
-        if HintApp then
-            HintApp:hint({ text = 'Start a trade first!', length = 2, overridable = true })
-        end
-        return
-    end
-    
-    local petName = getRandomHighValuePet()
-    local flags = generateRandomPetProperties()
-    local success, msg = addPetToMyOffer(petName, flags)
-    if HintApp and success then
-        local flagText = ''
-        if flags.M then flagText = 'Mega '
-        elseif flags.N then flagText = 'Neon ' end
-        if flags.F and flags.R then flagText = flagText .. 'FR'
-        elseif flags.F then flagText = flagText .. 'F'
-        elseif flags.R then flagText = flagText .. 'R' end
-        HintApp:hint({ text = '✓ Added ' .. flagText .. petName, length = 1.5, overridable = true })
-    end
-end)
+local theirOfferTab = Instance.new('TextButton')  
+theirOfferTab.Size = UDim2.new(0.33, 0, 1, 0)  
+theirOfferTab.Position = UDim2.new(0.33, 0, 0, 0)  
+theirOfferTab.BackgroundColor3 = Color3.fromRGB(50, 40, 40)  
+theirOfferTab.Text = 'THEIR OFFER'  
+theirOfferTab.Font = Enum.Font.GothamBold  
+theirOfferTab.TextSize = 13  
+theirOfferTab.TextColor3 = Color3.fromRGB(255, 150, 150)  
+theirOfferTab.BorderSizePixel = 0  
+theirOfferTab.Parent = tabFrame
 
--- REMOVE MY PET
-local removeMyPetButton = Instance.new('TextButton')
-removeMyPetButton.Size = UDim2.new(1, 0, 0, 38)
-removeMyPetButton.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
-removeMyPetButton.BackgroundTransparency = 0.1
-removeMyPetButton.Text = '➖ REMOVE FROM MY'
-removeMyPetButton.Font = Enum.Font.FredokaOne
-removeMyPetButton.TextSize = 12
-removeMyPetButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-removeMyPetButton.LayoutOrder = 15
-removeMyPetButton.Parent = innerContainer
-local rmpc = Instance.new('UICorner')
-rmpc.CornerRadius = UDim.new(0, 10)
-rmpc.Parent = removeMyPetButton
-local rmps = Instance.new('UIStroke')
-rmps.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-rmps.Color = Color3.fromRGB(255, 150, 150)
-rmps.Thickness = 2
-rmps.Parent = removeMyPetButton
+local controlTab = Instance.new('TextButton')  
+controlTab.Size = UDim2.new(0.34, 0, 1, 0)  
+controlTab.Position = UDim2.new(0.66, 0, 0, 0)  
+controlTab.BackgroundColor3 = Color3.fromRGB(40, 50, 40)  
+controlTab.Text = 'CONTROLS'  
+controlTab.Font = Enum.Font.GothamBold  
+controlTab.TextSize = 13  
+controlTab.TextColor3 = Color3.fromRGB(100, 255, 150)  
+controlTab.BorderSizePixel = 0  
+controlTab.Parent = tabFrame
 
-removeMyPetButton.MouseEnter:Connect(function()
-    TweenService:Create(removeMyPetButton, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(220, 100, 100) }):Play()
-end)
-removeMyPetButton.MouseLeave:Connect(function()
-    TweenService:Create(removeMyPetButton, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(200, 80, 80) }):Play()
-end)
+-- CONTENT CONTAINER  
+local contentFrame = Instance.new('Frame')  
+contentFrame.Size = UDim2.new(1, -20, 1, -120)  
+contentFrame.Position = UDim2.new(0, 10, 0, 90)  
+contentFrame.BackgroundTransparency = 1  
+contentFrame.Parent = mainFrame
 
-removeMyPetButton.MouseButton1Click:Connect(function()
-    if not mockState.active then
-        if HintApp then
-            HintApp:hint({ text = 'Start a trade first!', length = 2, overridable = true })
-        end
-        return
-    end
-    
-    local success = removeLatestPetFromMyOffer()
-    if HintApp and success then
-        HintApp:hint({ text = '✓ Removed from your offer', length = 1.5, overridable = true })
-    end
-end)
+-- MY OFFER CONTENT  
+local myOfferContent = Instance.new('ScrollingFrame')  
+myOfferContent.Size = UDim2.new(1, 0, 1, 0)  
+myOfferContent.BackgroundTransparency = 1  
+myOfferContent.ScrollBarThickness = 6  
+myOfferContent.CanvasSize = UDim2.new(0, 0, 0, 300)  
+myOfferContent.BorderSizePixel = 0  
+myOfferContent.Visible = true  
+myOfferContent.Parent = contentFrame
 
--- REMOVE PARTNER PET
-local removePartnerPetButton = Instance.new('TextButton')
-removePartnerPetButton.Size = UDim2.new(1, 0, 0, 38)
-removePartnerPetButton.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
-removePartnerPetButton.BackgroundTransparency = 0.1
-removePartnerPetButton.Text = '➖ REMOVE FROM PARTNER'
-removePartnerPetButton.Font = Enum.Font.FredokaOne
-removePartnerPetButton.TextSize = 12
-removePartnerPetButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-removePartnerPetButton.LayoutOrder = 16
-removePartnerPetButton.Parent = innerContainer
-local rppc = Instance.new('UICorner')
-rppc.CornerRadius = UDim.new(0, 10)
-rppc.Parent = removePartnerPetButton
-local rpps = Instance.new('UIStroke')
-rpps.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-rpps.Color = Color3.fromRGB(255, 150, 150)
-rpps.Thickness = 2
-rpps.Parent = removePartnerPetButton
+local myOfferLayout = Instance.new('UIListLayout')  
+myOfferLayout.Padding = UDim.new(0, 6)  
+myOfferLayout.SortOrder = Enum.SortOrder.LayoutOrder  
+myOfferLayout.Parent = myOfferContent
 
-removePartnerPetButton.MouseEnter:Connect(function()
-    TweenService:Create(removePartnerPetButton, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(220, 100, 100) }):Play()
-end)
-removePartnerPetButton.MouseLeave:Connect(function()
-    TweenService:Create(removePartnerPetButton, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(200, 80, 80) }):Play()
-end)
+-- THEIR OFFER CONTENT  
+local theirOfferContent = Instance.new('ScrollingFrame')  
+theirOfferContent.Size = UDim2.new(1, 0, 1, 0)  
+theirOfferContent.BackgroundTransparency = 1  
+theirOfferContent.ScrollBarThickness = 6  
+theirOfferContent.CanvasSize = UDim2.new(0, 0, 0, 300)  
+theirOfferContent.BorderSizePixel = 0  
+theirOfferContent.Visible = false  
+theirOfferContent.Parent = contentFrame
 
-removePartnerPetButton.MouseButton1Click:Connect(function()
-    if not mockState.active then
-        if HintApp then
-            HintApp:hint({ text = 'Start a trade first!', length = 2, overridable = true })
-        end
-        return
-    end
-    
-    local success = removeLatestPetFromPartnerOffer()
-    if HintApp and success then
-        HintApp:hint({ text = '✓ Removed from partner offer', length = 1.5, overridable = true })
-    end
-end)
+local theirOfferLayout = Instance.new('UIListLayout')  
+theirOfferLayout.Padding = UDim.new(0, 6)  
+theirOfferLayout.SortOrder = Enum.SortOrder.LayoutOrder  
+theirOfferLayout.Parent = theirOfferContent
 
--- Current Trade Status  
-local statusLabel = Instance.new('TextLabel')  
-statusLabel.Size = UDim2.new(1, 0, 0, 40)  
-statusLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 35)  
-statusLabel.BackgroundTransparency = 0.3  
-statusLabel.Text = 'Status: Not in trade'  
-statusLabel.Font = Enum.Font.GothamMedium  
-statusLabel.TextSize = 10  
-statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)  
-statusLabel.TextWrapped = true  
-statusLabel.LayoutOrder = 17  
-statusLabel.Parent = innerContainer  
-local slc = Instance.new('UICorner')  
-slc.CornerRadius = UDim.new(0, 6)  
-slc.Parent = statusLabel
+-- CONTROL CONTENT  
+local controlContent = Instance.new('ScrollingFrame')  
+controlContent.Size = UDim2.new(1, 0, 1, 0)  
+controlContent.BackgroundTransparency = 1  
+controlContent.ScrollBarThickness = 6  
+controlContent.CanvasSize = UDim2.new(0, 0, 0, 400)  
+controlContent.BorderSizePixel = 0  
+controlContent.Visible = false  
+controlContent.Parent = contentFrame
 
--- Trading Stats Dashboard
-local statsLabel = Instance.new('TextLabel')
-statsLabel.Size = UDim2.new(1, 0, 0, 45)
-statsLabel.BackgroundColor3 = Color3.fromRGB(20, 30, 20)
-statsLabel.BackgroundTransparency = 0.3
-statsLabel.Text = '📊 Stats: Trades: 0 | Sent: 0 | Got: 0'
-statsLabel.Font = Enum.Font.GothamMedium
-statsLabel.TextSize = 9
-statsLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
-statsLabel.TextWrapped = true
-statsLabel.LayoutOrder = 18
-statsLabel.Parent = innerContainer
-local stc2 = Instance.new('UICorner')
-stc2.CornerRadius = UDim.new(0, 6)
-stc2.Parent = statsLabel
+local controlLayout = Instance.new('UIListLayout')  
+controlLayout.Padding = UDim.new(0, 6)  
+controlLayout.SortOrder = Enum.SortOrder.LayoutOrder  
+controlLayout.Parent = controlContent
 
--- Anti-Detection Toggle Button
-local antiDetectButton = Instance.new('TextButton')
-antiDetectButton.Size = UDim2.new(1, 0, 0, 38)
-antiDetectButton.BackgroundColor3 = Color3.fromRGB(100, 80, 40)
-antiDetectButton.BackgroundTransparency = 0.1
-antiDetectButton.Text = 'F5: ANTI-DETECT OFF'
-antiDetectButton.Font = Enum.Font.FredokaOne
-antiDetectButton.TextSize = 11
-antiDetectButton.TextColor3 = Color3.fromRGB(255, 220, 180)
-antiDetectButton.LayoutOrder = 19
-antiDetectButton.Parent = innerContainer
-local adtc = Instance.new('UICorner')
-adtc.CornerRadius = UDim.new(0, 8)
-adtc.Parent = antiDetectButton
-local adts = Instance.new('UIStroke')
-adts.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-adts.Color = Color3.fromRGB(200, 150, 100)
-adts.Thickness = 1.5
-adts.Parent = antiDetectButton
+-- BUTTON HELPER FUNCTION  
+local function createActionButton(text, bgColor, parent, order, callback)  
+   local btn = Instance.new('TextButton')  
+   btn.Size = UDim2.new(1, 0, 0, 40)  
+   btn.BackgroundColor3 = bgColor  
+   btn.Text = text  
+   btn.Font = Enum.Font.Gotham  
+   btn.TextSize = 12  
+   btn.TextColor3 = Color3.fromRGB(255, 255, 255)  
+   btn.BorderSizePixel = 0  
+   btn.LayoutOrder = order  
+   btn.Parent = parent
 
-antiDetectButton.MouseButton1Click:Connect(function()
-    CONFIG.ANTI_DETECTION_MODE = not CONFIG.ANTI_DETECTION_MODE
-    if CONFIG.ANTI_DETECTION_MODE then
-        antiDetectButton.BackgroundColor3 = Color3.fromRGB(140, 100, 60)
-        antiDetectButton.Text = 'F5: ANTI-DETECT ON (slow)'
-        adts.Color = Color3.fromRGB(255, 180, 80)
-        if HintApp then
-            HintApp:hint({ text = '✓ Slower/human-like mode enabled', length = 2, overridable = true })
-        end
-    else
-        antiDetectButton.BackgroundColor3 = Color3.fromRGB(100, 80, 40)
-        antiDetectButton.Text = 'F5: ANTI-DETECT OFF'
-        adts.Color = Color3.fromRGB(200, 150, 100)
-        if HintApp then
-            HintApp:hint({ text = '✓ Fast mode enabled', length = 2, overridable = true })
-        end
-    end
-end)  
-  
--- Update status periodically  
-task.spawn(function()  
-    while true do  
-        task.wait(0.3)  
-        if mockState.active then  
-            local stage = mockState.trade and mockState.trade.current_stage or 'unknown'  
-            local myItems = mockState.trade and #mockState.trade.sender_offer.items or 0  
-            local partnerItems = mockState.trade and #mockState.trade.recipient_offer.items or 0  
-            local autoStatus = CONFIG.AUTO_ADD_ENABLED and '🤖' or ''  
-            statusLabel.Text = 'Stage: ' .. stage .. autoStatus .. '\nYou: ' .. myItems .. ' | Them: ' .. partnerItems  
-            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)  
-        else  
-            statusLabel.Text = 'Ready to start trade'  
-            statusLabel.TextColor3 = Color3.fromRGB(150, 150, 200)  
-        end  
-        statsLabel.Text = '📊 Stats: Trades: ' .. mockState.tradesCompleted .. ' | Sent: ' .. mockState.petsTraded .. ' | Got: ' .. mockState.petsReceived .. (CONFIG.ANTI_DETECTION_MODE and ' [ANTI-DET]' or '')  
-    end  
-end)
+   local corner = Instance.new('UICorner')  
+   corner.CornerRadius = UDim.new(0, 8)  
+   corner.Parent = btn
 
--- Update canvas size for scrolling
-task.spawn(function()
-    while true do
-        task.wait(0.1)
-        scrollFrame.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 20)
-    end
-end)  
-  
--- Make frame draggable  
-local dragging = false  
-local dragInput, dragStart, startPos  
-  
-mainFrame.InputBegan:Connect(function(input)  
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then  
-        dragging = true  
-        dragStart = input.Position  
-        startPos = mainFrame.Position  
-  
-        input.Changed:Connect(function()  
-            if input.UserInputState == Enum.UserInputState.End then  
-                dragging = false  
-            end  
-        end)  
-    end  
-end)  
-  
-mainFrame.InputChanged:Connect(function(input)  
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then  
-        dragInput = input  
-    end  
-end)  
-  
-Services.UserInputService.InputChanged:Connect(function(input)  
-    if input == dragInput and dragging then  
-        local delta = input.Position - dragStart  
-        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)  
-    end  
-end)  
-  
--- RGB Border Effect  
-local rgbHue = 0  
-task.spawn(function()  
-    while true do  
-        task.wait(0.03)  
-        rgbHue = (rgbHue + 0.5) % 360  
-        mainStroke.Color = Color3.fromHSV(rgbHue / 360, 0.8, 1)  
-    end  
-end)  
-  
-print("\n=== ADOPT ME TRADE BOT LOADED ===")
-print("Press F6 to toggle GUI")
-print("\n🚀 BOT FEATURES:")
-print("  ✓ Start trades")
-print("  ✓ Auto-accept partner trades")
-print("  ✓ Auto-confirm trades")
-print("  ✓ Add pets manually or auto")
-print("  ✓ Remove pets from both sides")
-print("  ✓ Real-time status tracking")
-print("\n🔎 FUTURE IDEAS TO ADD:")
-print("  [ ] Trade value calculator")
-print("  [ ] Pet wishlist system")
-print("  [ ] Auto-decline scam trades")
-print("  [ ] Trade history logging")
-print("  [ ] Keyboard hotkeys for quick adds")
-print("  [ ] Sound notifications")
-print("  [ ] Multi-trade queue system")
-print("  [ ] Pet rarity filter")
-print("  [ ] Custom trade presets")
-print("  [ ] Anti-detection features")
-print("  [ ] Trade analytics")
-print("  [ ] Cross-server trading")
-print("  [ ] Pet value suggestions")
-print("  [ ] Chat commands")
-print("  [ ] Trading stats dashboard")
-print("=================================\n")
-
--- Anti-Detection Random Delay
-local function getSmartDelay()
-    if CONFIG.ANTI_DETECTION_MODE then
-        return math.random(100, 500) / 1000
-    end
-    return 0.05
+   btn.MouseButton1Click:Connect(callback or function() end)  
+   return btn  
 end
 
--- Keyboard hotkey system
-local hotkeyActive = false
-Services.UserInputService.InputBegan:Connect(function(input, gameProcessed)  
-    if gameProcessed then return end
-    
-    if input.KeyCode == Enum.KeyCode.F6 then  
-        mainFrame.Visible = not mainFrame.Visible  
-    elseif input.KeyCode == Enum.KeyCode.F1 and mockState.active then
-        task.spawn(function()
-            local petName = getRandomHighValuePet()
-            local flags = generateRandomPetProperties()
-            addPetToPartnerOffer(petName, flags)
-        end)
-    elseif input.KeyCode == Enum.KeyCode.F2 and mockState.active then
-        task.spawn(function()
-            removeLatestPetFromPartnerOffer()
-        end)
-    elseif input.KeyCode == Enum.KeyCode.F3 and mockState.active then
-        task.spawn(function()
-            local petName = getRandomHighValuePet()
-            local flags = generateRandomPetProperties()
-            addPetToMyOffer(petName, flags)
-        end)
-    elseif input.KeyCode == Enum.KeyCode.F4 and mockState.active then
-        task.spawn(function()
-            removeLatestPetFromMyOffer()
-        end)
-    elseif input.KeyCode == Enum.KeyCode.F5 then
-        CONFIG.ANTI_DETECTION_MODE = not CONFIG.ANTI_DETECTION_MODE
-        local status = CONFIG.ANTI_DETECTION_MODE and 'ENABLED' or 'DISABLED'
-        if HintApp then
-            HintApp:hint({ text = 'Anti-Detect: ' .. status, length = 2, overridable = true })
-        end
-    end
+-- MY OFFER BUTTONS  
+local myOfferLabel = Instance.new('TextLabel')  
+myOfferLabel.Size = UDim2.new(1, 0, 0, 25)  
+myOfferLabel.BackgroundTransparency = 1  
+myOfferLabel.Text = '🎁 ADD ITEMS TO YOUR OFFER'  
+myOfferLabel.Font = Enum.Font.GothamBold  
+myOfferLabel.TextSize = 13  
+myOfferLabel.TextColor3 = Color3.fromRGB(200, 150, 255)  
+myOfferLabel.TextXAlignment = Enum.TextXAlignment.Left  
+myOfferLabel.LayoutOrder = 1  
+myOfferLabel.Parent = myOfferContent
+
+createActionButton('➕ ADD HIGH TIER PET (MY SIDE)', Color3.fromRGB(100, 50, 150), myOfferContent, 2, function()  
+   if not mockState.active then  
+       if HintApp then HintApp:hint({ text = 'Start a trade first!', length = 2, overridable = true }) end  
+       return  
+   end  
+   local petName = getRandomHighValuePet()  
+   local flags = generateRandomPetProperties()  
+   -- Add to MY offer instead of partner  
+   local success, msg = addPetToMyOffer(petName, flags)  
+   if HintApp then  
+       if success then  
+           local flagText = ''  
+           if flags.M then flagText = 'Mega ' elseif flags.N then flagText = 'Neon ' end  
+           if flags.F and flags.R then flagText = flagText .. 'FR' elseif flags.F then flagText = flagText .. 'F' elseif flags.R then flagText = flagText .. 'R' end  
+           HintApp:hint({ text = 'Added ' .. flagText .. petName .. ' to YOUR offer!', length = 3, overridable = true })  
+       else  
+           HintApp:hint({ text = 'Failed to add pet!', length = 2, overridable = true })  
+       end  
+   end  
 end)
 
-print("\\n🎮 HOTKEYS ACTIVE:")
-print("  F1 = Add to Partner | F2 = Remove from Partner")
-print("  F3 = Add to You | F4 = Remove from You")
-print("  F5 = Toggle Anti-Detect | F6 = Toggle GUI")  
+-- THEIR OFFER BUTTONS  
+local theirOfferLabel = Instance.new('TextLabel')  
+theirOfferLabel.Size = UDim2.new(1, 0, 0, 25)  
+theirOfferLabel.BackgroundTransparency = 1  
+theirOfferLabel.Text = '🎯 ADD ITEMS TO THEIR OFFER'  
+theirOfferLabel.Font = Enum.Font.GothamBold  
+theirOfferLabel.TextSize = 13  
+theirOfferLabel.TextColor3 = Color3.fromRGB(255, 150, 150)  
+theirOfferLabel.TextXAlignment = Enum.TextXAlignment.Left  
+theirOfferLabel.LayoutOrder = 1  
+theirOfferLabel.Parent = theirOfferContent
+
+createActionButton('➕ ADD HIGH TIER PET (THEIR SIDE)', Color3.fromRGB(150, 50, 50), theirOfferContent, 2, function()  
+   if not mockState.active then  
+       if HintApp then HintApp:hint({ text = 'Start a trade first!', length = 2, overridable = true }) end  
+       return  
+   end  
+   local petName = getRandomHighValuePet()  
+   local flags = generateRandomPetProperties()  
+   local success, msg = addPetToPartnerOffer(petName, flags)  
+   if HintApp then  
+       if success then  
+           local flagText = ''  
+           if flags.M then flagText = 'Mega ' elseif flags.N then flagText = 'Neon ' end  
+           if flags.F and flags.R then flagText = flagText .. 'FR' elseif flags.F then flagText = flagText .. 'F' elseif flags.R then flagText = flagText .. 'R' end  
+           HintApp:hint({ text = 'Added ' .. flagText .. petName .. ' to trade!', length = 3, overridable = true })  
+       else  
+           HintApp:hint({ text = 'Failed to add pet!', length = 2, overridable = true })  
+       end  
+   end  
+end)
+
+-- CONTROLS SECTION  
+local controlLabel = Instance.new('TextLabel')  
+controlLabel.Size = UDim2.new(1, 0, 0, 25)  
+controlLabel.BackgroundTransparency = 1  
+controlLabel.Text = '⚙️ TRADE CONTROLS'  
+controlLabel.Font = Enum.Font.GothamBold  
+controlLabel.TextSize = 13  
+controlLabel.TextColor3 = Color3.fromRGB(100, 255, 150)  
+controlLabel.TextXAlignment = Enum.TextXAlignment.Left  
+controlLabel.LayoutOrder = 1  
+controlLabel.Parent = controlContent
+
+createActionButton('START TRADE', Color3.fromRGB(50, 150, 80), controlContent, 2, function()  
+   if mockState.active or mockState.pendingTradeRequest then  
+       if HintApp then  
+           HintApp:hint({ text = 'Already in a trade!', length = 2, overridable = true })  
+       end  
+       return  
+   end  
+   if CONFIG.SHOW_TRADE_REQUEST then  
+       task.spawn(showTradeRequest)  
+   else  
+       task.spawn(startMockTradeDirectly)  
+   end  
+end)
+
+createActionButton('ACCEPT TRADE', Color3.fromRGB(0, 120, 200), controlContent, 3, function()  
+   if not mockState.active then  
+       if HintApp then HintApp:hint({ text = 'No active trade!', length = 2, overridable = true }) end  
+       return  
+   end  
+   if mockState.trade and mockState.trade.sender_offer then  
+       TradeApp:_on_accept_pressed()  
+   end  
+end)
+
+createActionButton('CONFIRM TRADE', Color3.fromRGB(0, 180, 100), controlContent, 4, function()  
+   if not mockState.active then  
+       if HintApp then HintApp:hint({ text = 'No active trade!', length = 2, overridable = true }) end  
+       return  
+   end  
+   if mockState.trade and mockState.trade.current_stage == 'confirmation' then  
+       TradeApp:_on_confirm_pressed()  
+   end  
+end)
+
+createActionButton('CANCEL TRADE', Color3.fromRGB(200, 50, 50), controlContent, 5, function()  
+   if not mockState.active then  
+       if HintApp then HintApp:hint({ text = 'No active trade!', length = 2, overridable = true }) end  
+       return  
+   end  
+   mockState.active = false  
+   if HintApp then  
+       HintApp:hint({ text = 'Trade cancelled!', length = 2, overridable = true })  
+   end  
+end)
+
+-- STATUS DISPLAY  
+local statusLabel = Instance.new('TextLabel')  
+statusLabel.Size = UDim2.new(1, 0, 0, 35)  
+statusLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 35)  
+statusLabel.BackgroundTransparency = 0.3  
+statusLabel.Text = '📊 Status: Ready | Press F6 to toggle'  
+statusLabel.Font = Enum.Font.GothamMedium  
+statusLabel.TextSize = 11  
+statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)  
+statusLabel.BorderSizePixel = 0  
+statusLabel.LayoutOrder = 999  
+statusLabel.Parent = mainFrame
+
+local statusCorner = Instance.new('UICorner')  
+statusCorner.CornerRadius = UDim.new(0, 8)  
+statusCorner.Parent = statusLabel
+
+-- TAB SWITCHING  
+local function switchTab(tabName)  
+   myOfferContent.Visible = (tabName == 'myOffer')  
+   theirOfferContent.Visible = (tabName == 'theirOffer')  
+   controlContent.Visible = (tabName == 'control')  
+   
+   myOfferTab.BackgroundColor3 = (tabName == 'myOffer') and Color3.fromRGB(80, 60, 140) or Color3.fromRGB(50, 40, 80)  
+   theirOfferTab.BackgroundColor3 = (tabName == 'theirOffer') and Color3.fromRGB(150, 60, 60) or Color3.fromRGB(50, 40, 40)  
+   controlTab.BackgroundColor3 = (tabName == 'control') and Color3.fromRGB(60, 100, 60) or Color3.fromRGB(40, 50, 40)  
+end
+
+myOfferTab.MouseButton1Click:Connect(function() switchTab('myOffer') end)  
+theirOfferTab.MouseButton1Click:Connect(function() switchTab('theirOffer') end)  
+controlTab.MouseButton1Click:Connect(function() switchTab('control') end)
+
+-- STATUS UPDATE LOOP  
+task.spawn(function()  
+   while true do  
+       task.wait(0.5)  
+       if mockState.active then  
+           local stage = mockState.trade and mockState.trade.current_stage or 'unknown'  
+           local myItems = mockState.trade and #mockState.trade.sender_offer.items or 0  
+           local theirItems = mockState.trade and #mockState.trade.recipient_offer.items or 0  
+           statusLabel.Text = '📊 IN TRADE | Stage: ' .. stage .. ' | You: ' .. myItems .. ' | Them: ' .. theirItems  
+           statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)  
+       else  
+           statusLabel.Text = '📊 Status: Ready | Press F6 to toggle'  
+           statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)  
+       end  
+   end  
+end)
+
+-- HELPER FUNCTIONS FOR MY OFFER  
+function addPetToMyOffer(petName, flags)  
+   if not mockState.active or not mockState.trade then return false, 'No active trade' end  
+   
+   local success, petId = pcall(function()  
+       for id, pet in pairs(InventoryDB.pets) do  
+           if pet.name:lower() == petName:lower() then return id end  
+       end  
+       return false  
+   end)  
+   
+   if not success or not petId then return false, 'Pet not found' end  
+   
+   local petData = {  
+       unique = HttpService:GenerateGUID(false),  
+       id = petId,  
+       kind = InventoryDB.pets[petId].kind,  
+       properties = {  
+           neon = flags.N,  
+           mega_neon = flags.M,  
+           flyable = flags.F,  
+           rideable = flags.R  
+       }  
+   }  
+   
+   table.insert(mockState.trade.sender_offer.items, petData)  
+   mockState.trade.offer_version = mockState.trade.offer_version + 1  
+   TradeApp:_overwrite_local_trade_state(mockState.trade)  
+   return true, 'Added to your offer'  
+end
+
+-- RGB BORDER EFFECT  
+local rgbHue = 0  
+task.spawn(function()  
+   while true do  
+       task.wait(0.03)  
+       rgbHue = (rgbHue + 0.5) % 360  
+       mainStroke.Color = Color3.fromHSV(rgbHue / 360, 0.8, 1)  
+   end  
+end)
+
+print("🎮 Trade System Loaded! Press F6 to toggle GUI | Script by Iveyyy43 on dc")  
