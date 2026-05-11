@@ -625,8 +625,8 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 240, 0, 520)
-mainFrame.Position = UDim2.new(0.5, -120, 0.5, -260)
+mainFrame.Size = UDim2.new(0, 300, 0, 720)
+mainFrame.Position = UDim2.new(0.5, -150, 0.5, -360)
 mainFrame.BackgroundColor3 = Color3.fromRGB(25, 18, 44)
 mainFrame.BackgroundTransparency = 0
 mainFrame.BorderSizePixel = 0
@@ -654,7 +654,7 @@ uiGradient.Rotation = 45
 uiGradient.Parent = mainFrame
 
 local blackFrame = Instance.new("Frame")
-blackFrame.Size = UDim2.new(0, 250, 0, 530)
+blackFrame.Size = UDim2.new(0, 310, 0, 730)
 blackFrame.BackgroundColor3 = Color3.new(0, 0, 0)
 blackFrame.BackgroundTransparency = 0
 blackFrame.BorderSizePixel = 0
@@ -741,14 +741,19 @@ tabsCorner2.Parent = editorTab
 
 -- === CONTENT FRAMES ===
 local contentContainer = Instance.new("Frame")
-contentContainer.Size = UDim2.new(1, 0, 1, -90) -- Adjusted for tabs and title
+contentContainer.Size = UDim2.new(1, 0, 1, -100) -- More room for extra controls
 contentContainer.Position = UDim2.new(0, 0, 0, 90)
 contentContainer.BackgroundTransparency = 1
 contentContainer.Parent = mainFrame
 
--- Main content frame (default visible)
-local mainContent = Instance.new("Frame")
+-- Main content frame (scrollable, default visible)
+local mainContent = Instance.new("ScrollingFrame")
 mainContent.Size = UDim2.new(1, 0, 1, 0)
+mainContent.CanvasSize = UDim2.new(0, 0, 2, 0)
+mainContent.ScrollBarThickness = 8
+mainContent.ScrollBarImageColor3 = Color3.fromRGB(140, 140, 255)
+mainContent.ScrollBarImageTransparency = 0.3
+mainContent.ScrollingEnabled = true
 mainContent.BackgroundTransparency = 1
 mainContent.Visible = true
 mainContent.Parent = contentContainer
@@ -780,6 +785,18 @@ creatorLabel.Font = Enum.Font.FredokaOne
 creatorLabel.TextSize = 10
 creatorLabel.TextColor3 = Color3.fromRGB(180, 180, 255)
 creatorLabel.Parent = mainFrame
+
+local keybindLabel = Instance.new("TextLabel")
+keybindLabel.Size = UDim2.new(0.9, 0, 0, 16)
+keybindLabel.Position = UDim2.new(0.05, 0, 0, 50)
+keybindLabel.BackgroundTransparency = 1
+keybindLabel.Text = "Keys: Shift = toggle GUI | P=RandomPet | T=RandomToy | V=Favorite | E=Spawn+Equip | M=Mount"
+keybindLabel.Font = Enum.Font.FredokaOne
+keybindLabel.TextSize = 9
+keybindLabel.TextColor3 = Color3.fromRGB(180, 180, 255)
+keybindLabel.TextWrapped = true
+keybindLabel.TextXAlignment = Enum.TextXAlignment.Left
+keybindLabel.Parent = mainFrame
 
 -- === PET SECTION ===
 local petNameLabel = Instance.new("TextLabel")
@@ -820,6 +837,10 @@ petNameBox.PlaceholderText = "insert pet name"
 petNameBox.Text = ""
 petNameBox.ClearTextOnFocus = false
 petNameBox.Parent = mainContent
+
+petNameBox.FocusLost:Connect(function()
+    updateSelectionStatus()
+end)
 
 Instance.new("UICorner", petNameBox).CornerRadius = UDim.new(0, 6)
 
@@ -1045,6 +1066,28 @@ currentStatusLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
 currentStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 currentStatusLabel.Parent = statusRow
 
+local selectionStatusRow = Instance.new("Frame")
+selectionStatusRow.Size = UDim2.new(0.9, 0, 0, 18)
+selectionStatusRow.Position = UDim2.new(0.05, 0, 0.50, 0)
+selectionStatusRow.BackgroundTransparency = 1
+selectionStatusRow.Parent = mainContent
+
+local selectionStatusLabel = Instance.new("TextLabel")
+selectionStatusLabel.Size = UDim2.new(1, 0, 1, 0)
+selectionStatusLabel.BackgroundTransparency = 1
+selectionStatusLabel.Text = "Selected: none / Toy: none"
+selectionStatusLabel.Font = Enum.Font.FredokaOne
+selectionStatusLabel.TextSize = 9
+selectionStatusLabel.TextColor3 = Color3.fromRGB(190, 190, 255)
+selectionStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+selectionStatusLabel.Parent = selectionStatusRow
+
+local function updateSelectionStatus()
+    local petText = petNameBox.Text ~= "" and petNameBox.Text or "none"
+    local toyText = toyNameBox.Text ~= "" and toyNameBox.Text or "none"
+    selectionStatusLabel.Text = string.format("Selected: %s / Toy: %s", petText, toyText)
+end
+
 local function setQuickStatus(text)
     quickStatus = text
     currentStatusLabel.Text = "Status: " .. tostring(text)
@@ -1052,7 +1095,7 @@ end
 
 local favoriteBtn = Instance.new("TextButton")
 favoriteBtn.Size = UDim2.new(0.44, 0, 0, 18)
-favoriteBtn.Position = UDim2.new(0.05, 0, 0.48, 0)
+favoriteBtn.Position = UDim2.new(0.05, 0, 0.56, 0)
 favoriteBtn.Text = "Favorite Pet"
 favoriteBtn.Font = Enum.Font.FredokaOne
 favoriteBtn.TextSize = 10
@@ -1064,7 +1107,7 @@ Instance.new("UICorner", favoriteBtn).CornerRadius = UDim.new(0, 6)
 
 local randomToyBtn = Instance.new("TextButton")
 randomToyBtn.Size = UDim2.new(0.44, 0, 0, 18)
-randomToyBtn.Position = UDim2.new(0.51, 0, 0.48, 0)
+randomToyBtn.Position = UDim2.new(0.51, 0, 0.56, 0)
 randomToyBtn.Text = "Random Toy"
 randomToyBtn.Font = Enum.Font.FredokaOne
 randomToyBtn.TextSize = 10
@@ -1076,7 +1119,7 @@ Instance.new("UICorner", randomToyBtn).CornerRadius = UDim.new(0, 6)
 
 local clearSelectionBtn = Instance.new("TextButton")
 clearSelectionBtn.Size = UDim2.new(0.9, 0, 0, 18)
-clearSelectionBtn.Position = UDim2.new(0.05, 0, 0.52, 0)
+clearSelectionBtn.Position = UDim2.new(0.05, 0, 0.62, 0)
 clearSelectionBtn.Text = "Clear Selection"
 clearSelectionBtn.Font = Enum.Font.FredokaOne
 clearSelectionBtn.TextSize = 10
@@ -1088,7 +1131,7 @@ Instance.new("UICorner", clearSelectionBtn).CornerRadius = UDim.new(0, 6)
 
 local optionsRow = Instance.new("Frame")
 optionsRow.Size = UDim2.new(0.9, 0, 0, 24)
-optionsRow.Position = UDim2.new(0.05, 0, 0.56, 0)
+optionsRow.Position = UDim2.new(0.05, 0, 0.68, 0)
 optionsRow.BackgroundTransparency = 1
 optionsRow.Parent = mainContent
 
@@ -1120,18 +1163,22 @@ favoriteBtn.MouseButton1Click:Connect(function()
     favoriteIndex = favoriteIndex % #favoritePets + 1
     petNameBox.Text = favoritePets[favoriteIndex]
     setQuickStatus("Favorite: " .. favoritePets[favoriteIndex])
+    updateSelectionStatus()
 end)
 
 randomToyBtn.MouseButton1Click:Connect(function()
     local toyIndex = math.random(1, #toyNames)
     toyNameBox.Text = toyNames[toyIndex]
+    selectedToy = toyNames[toyIndex]
     setQuickStatus("Random Toy: " .. toyNames[toyIndex])
+    updateSelectionStatus()
 end)
 
 clearSelectionBtn.MouseButton1Click:Connect(function()
     petNameBox.Text = ""
     toyNameBox.Text = ""
     selectedToy = ""
+    updateSelectionStatus()
     setQuickStatus("Cleared selection")
 end)
 
@@ -1152,7 +1199,7 @@ end)
 -- === TOY SECTION ===
 local toyListLabel = Instance.new("TextLabel")
 toyListLabel.Size = UDim2.new(0.6, 0, 0, 12)
-toyListLabel.Position = UDim2.new(0.05, 0, 0.64, 0)
+toyListLabel.Position = UDim2.new(0.05, 0, 0.74, 0)
 toyListLabel.BackgroundTransparency = 1
 toyListLabel.Text = "Toy List"
 toyListLabel.Font = Enum.Font.FredokaOne
@@ -1163,7 +1210,7 @@ toyListLabel.Parent = mainContent
 
 local toyListBtn = Instance.new("TextButton")
 toyListBtn.Size = UDim2.new(0.3, 0, 0, 12)
-toyListBtn.Position = UDim2.new(0.65, 0, 0.62, 0)
+toyListBtn.Position = UDim2.new(0.65, 0, 0.72, 0)
 toyListBtn.Text = "Toy list"
 toyListBtn.Font = Enum.Font.FredokaOne
 toyListBtn.TextSize = 8
@@ -1178,7 +1225,7 @@ toyListCorner.Parent = toyListBtn
 
 local toyNameBox = Instance.new("TextBox")
 toyNameBox.Size = UDim2.new(0.9, 0, 0, 20)
-toyNameBox.Position = UDim2.new(0.05, 0, 0.69, 0)
+toyNameBox.Position = UDim2.new(0.05, 0, 0.79, 0)
 toyNameBox.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
 toyNameBox.BackgroundTransparency = 0.2
 toyNameBox.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1188,6 +1235,13 @@ toyNameBox.PlaceholderText = "selected toy appears here"
 toyNameBox.Text = ""
 toyNameBox.ClearTextOnFocus = false
 toyNameBox.Parent = mainContent
+
+toyNameBox.FocusLost:Connect(function()
+    selectedToy = toyNameBox.Text
+    updateSelectionStatus()
+end)
+
+updateSelectionStatus()
 
 Instance.new("UICorner", toyNameBox).CornerRadius = UDim.new(0, 6)
 
@@ -1205,7 +1259,7 @@ toyBoxGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 -- === TOY SHOW DIALOG BUTTON ===
 local toyDialogBtn = Instance.new("TextButton")
 toyDialogBtn.Size = UDim2.new(0.9, 0, 0, 20)
-toyDialogBtn.Position = UDim2.new(0.05, 0, 0.75, 0)
+toyDialogBtn.Position = UDim2.new(0.05, 0, 0.86, 0)
 toyDialogBtn.Text = "Show Toy Dialog"
 toyDialogBtn.Font = Enum.Font.FredokaOne
 toyDialogBtn.TextSize = 11
@@ -1223,7 +1277,7 @@ local spamSpeed = 0.01 -- ULTRA FAST: 0.01 seconds = 100 dialogs per second
 
 local spamContainer = Instance.new("Frame")
 spamContainer.Size = UDim2.new(0.9, 0, 0, 20)
-spamContainer.Position = UDim2.new(0.05, 0, 0.82, 0) -- Adjusted position for mainContent
+spamContainer.Position = UDim2.new(0.05, 0, 0.92, 0) -- Adjusted position for mainContent
 spamContainer.BackgroundTransparency = 1
 spamContainer.Parent = mainContent
 
@@ -1263,7 +1317,7 @@ circleCorner.Parent = toggleCircle
 -- === SPAM STATUS ===
 local spamStatus = Instance.new("TextLabel")
 spamStatus.Size = UDim2.new(0.9, 0, 0, 15)
-spamStatus.Position = UDim2.new(0.05, 0, 0.86, 0)
+spamStatus.Position = UDim2.new(0.05, 0, 0.97, 0)
 spamStatus.BackgroundTransparency = 1
 spamStatus.Text = "Status: OFF (Speed: 100/sec)"
 spamStatus.Font = Enum.Font.FredokaOne
@@ -1273,7 +1327,7 @@ spamStatus.Parent = mainContent
 
 local spamSpeedFrame = Instance.new("Frame")
 spamSpeedFrame.Size = UDim2.new(0.9, 0, 0, 22)
-spamSpeedFrame.Position = UDim2.new(0.05, 0, 0.89, 0)
+spamSpeedFrame.Position = UDim2.new(0.05, 0, 1.02, 0)
 spamSpeedFrame.BackgroundTransparency = 1
 spamSpeedFrame.Parent = mainContent
 
@@ -1334,7 +1388,7 @@ updateSpamStatus()
 -- === EXTRA ACTION BUTTONS ===
 local actionButtonContainer = Instance.new("Frame")
 actionButtonContainer.Size = UDim2.new(0.9, 0, 0, 30)
-actionButtonContainer.Position = UDim2.new(0.05, 0, 0.92, 0)
+actionButtonContainer.Position = UDim2.new(0.05, 0, 1.10, 0)
 actionButtonContainer.BackgroundTransparency = 1
 actionButtonContainer.Parent = mainContent
 
@@ -1362,9 +1416,63 @@ mountToggleBtn.AutoButtonColor = true
 mountToggleBtn.Parent = actionButtonContainer
 Instance.new("UICorner", mountToggleBtn).CornerRadius = UDim.new(0, 6)
 
+local utilityButtonRow = Instance.new("Frame")
+utilityButtonRow.Size = UDim2.new(0.9, 0, 0, 20)
+utilityButtonRow.Position = UDim2.new(0.05, 0, 0.96, 0)
+utilityButtonRow.BackgroundTransparency = 1
+utilityButtonRow.Parent = mainContent
+
+local favoritePackBtn = Instance.new("TextButton")
+favoritePackBtn.Size = UDim2.new(0.44, 0, 1, 0)
+favoritePackBtn.Position = UDim2.new(0, 0, 0, 0)
+favoritePackBtn.Text = "Favorite Pack"
+favoritePackBtn.Font = Enum.Font.FredokaOne
+favoritePackBtn.TextSize = 10
+favoritePackBtn.BackgroundColor3 = Color3.fromRGB(90, 40, 180)
+favoritePackBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+favoritePackBtn.AutoButtonColor = true
+favoritePackBtn.Parent = utilityButtonRow
+Instance.new("UICorner", favoritePackBtn).CornerRadius = UDim.new(0, 6)
+
+local randomSetBtn = Instance.new("TextButton")
+randomSetBtn.Size = UDim2.new(0.44, 0, 1, 0)
+randomSetBtn.Position = UDim2.new(0.55, 0, 0, 0)
+randomSetBtn.Text = "Random Set"
+randomSetBtn.Font = Enum.Font.FredokaOne
+randomSetBtn.TextSize = 10
+randomSetBtn.BackgroundColor3 = Color3.fromRGB(180, 80, 40)
+randomSetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+randomSetBtn.AutoButtonColor = true
+randomSetBtn.Parent = utilityButtonRow
+Instance.new("UICorner", randomSetBtn).CornerRadius = UDim.new(0, 6)
+
+local resetFlagsBtn = Instance.new("TextButton")
+resetFlagsBtn.Size = UDim2.new(0.9, 0, 0, 18)
+resetFlagsBtn.Position = UDim2.new(0.05, 0, 1, 0)
+resetFlagsBtn.Text = "Reset Flags"
+resetFlagsBtn.Font = Enum.Font.FredokaOne
+resetFlagsBtn.TextSize = 10
+resetFlagsBtn.BackgroundColor3 = Color3.fromRGB(120, 40, 140)
+resetFlagsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+resetFlagsBtn.AutoButtonColor = true
+resetFlagsBtn.Parent = mainContent
+Instance.new("UICorner", resetFlagsBtn).CornerRadius = UDim.new(0, 6)
+
+local copyMessageBtn = Instance.new("TextButton")
+copyMessageBtn.Size = UDim2.new(0.9, 0, 0, 18)
+copyMessageBtn.Position = UDim2.new(0.05, 0, 1.05, 0)
+copyMessageBtn.Text = "Copy Dialog Text"
+copyMessageBtn.Font = Enum.Font.FredokaOne
+copyMessageBtn.TextSize = 10
+copyMessageBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+copyMessageBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+copyMessageBtn.AutoButtonColor = true
+copyMessageBtn.Parent = mainContent
+Instance.new("UICorner", copyMessageBtn).CornerRadius = UDim.new(0, 6)
+
 local addToInventoryBtn = Instance.new("TextButton")
 addToInventoryBtn.Size = UDim2.new(0.9, 0, 0, 20)
-addToInventoryBtn.Position = UDim2.new(0.05, 0, 0.98, 0)
+addToInventoryBtn.Position = UDim2.new(0.05, 0, 1.07, 0)
 addToInventoryBtn.Text = "Add to Inventory"
 addToInventoryBtn.Font = Enum.Font.FredokaOne
 addToInventoryBtn.TextSize = 11
@@ -1866,6 +1974,46 @@ end
 
 addToInventoryBtn.MouseButton1Click:Connect(addToInventory)
 
+local function resetPotFlags()
+    for _, prefix in ipairs(prefixes) do
+        activeFlags[prefix] = false
+    end
+    updateInfoBox()
+    setQuickStatus("Flag configuration reset")
+end
+
+local function spawnFavoritePack()
+    favoriteIndex = favoriteIndex % #favoritePets + 1
+    petNameBox.Text = favoritePets[favoriteIndex]
+    selectedToy = toyNames[math.random(1, #toyNames)]
+    toyNameBox.Text = selectedToy
+    updateSelectionStatus()
+    addToInventory()
+    setQuickStatus("Favorite pack spawned")
+end
+
+local function spawnRandomPetToy()
+    petNameBox.Text = petNames[math.random(1, #petNames)]
+    selectedToy = toyNames[math.random(1, #toyNames)]
+    toyNameBox.Text = selectedToy
+    updateSelectionStatus()
+    addToInventory()
+    setQuickStatus("Random pet + toy spawned")
+end
+
+copyMessageBtn.MouseButton1Click:Connect(function()
+    if setclipboard then
+        setclipboard(currentDialogMessage)
+        setQuickStatus("Dialog text copied")
+    else
+        setQuickStatus("Copy unavailable")
+    end
+end)
+
+resetFlagsBtn.MouseButton1Click:Connect(resetPotFlags)
+favoritePackBtn.MouseButton1Click:Connect(spawnFavoritePack)
+randomSetBtn.MouseButton1Click:Connect(spawnRandomPetToy)
+
 -- === FIXED ULTRA-FAST SPAM FUNCTION (WITH PET ICONS) ===
 local function ultraFastSpam()
    while spamActive do
@@ -2110,6 +2258,8 @@ end)
 -- === MODIFIED FIXED DIALOG FUNCTION FOR PETS (USES CUSTOM MESSAGE AND PROPER ITEM DATA) ===
 local function showPetDialog()
    local selectedPet = petNameBox.Text
+   local selectedToyText = toyNameBox.Text
+   selectedToy = selectedToyText
    if selectedPet == "" or selectedPet == "insert pet name" then
        return
    end
