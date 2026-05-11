@@ -765,7 +765,7 @@ local topLabel = Instance.new("TextLabel")
 topLabel.Size = UDim2.new(1, 0, 0, 25)
 topLabel.Position = UDim2.new(0, 0, 0, 5)
 topLabel.BackgroundTransparency = 1
-topLabel.Text = "PaxzScripz OVERPOWERD Pet Spawner"
+topLabel.Text = "PaxzScripz/iveyyy43 Pet Spawner"
 topLabel.Font = Enum.Font.FredokaOne
 topLabel.TextSize = 14
 topLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
@@ -2620,7 +2620,7 @@ task.spawn(function()
 end)
 
 print("=" .. string.rep("=", 50))
-print("PaxzScripz OVERPOWERD SPAWNER LOADED!")
+print("PaxzScripz SPAWNER LOADED!")
 print("Founder: PaxzScripz / @iveyyy43")
 print("Features:")
 print("1. Show Pet Dialog (Blue button) - Spawns selected pet with dialog")
